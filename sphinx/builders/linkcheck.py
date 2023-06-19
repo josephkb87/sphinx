@@ -1,37 +1,28 @@
-"""
-    sphinx.builders.linkcheck
-    ~~~~~~~~~~~~~~~~~~~~~~~~~
+"""The CheckExternalLinksBuilder class."""
 
-    The CheckExternalLinksBuilder class.
-
-    :copyright: Copyright 2007-2022 by the Sphinx team, see AUTHORS.
-    :license: BSD, see LICENSE for details.
-"""
+from __future__ import annotations
 
 import json
 import re
 import socket
 import time
-import warnings
+from copy import deepcopy
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 from os import path
 from queue import PriorityQueue, Queue
 from threading import Thread
-from typing import (Any, Dict, Generator, List, NamedTuple, Optional, Pattern, Set, Tuple,
-                    Union, cast)
+from typing import Any, Generator, NamedTuple, Tuple, Union, cast
 from urllib.parse import unquote, urlparse, urlunparse
 
 from docutils import nodes
-from docutils.nodes import Element
 from requests import Response
 from requests.exceptions import ConnectionError, HTTPError, TooManyRedirects
 
 from sphinx.application import Sphinx
 from sphinx.builders.dummy import DummyBuilder
 from sphinx.config import Config
-from sphinx.deprecation import RemovedInSphinx50Warning
 from sphinx.environment import BuildEnvironment
 from sphinx.locale import __
 from sphinx.transforms.post_transforms import SphinxPostTransform
@@ -47,12 +38,12 @@ uri_re = re.compile('([a-z]+:)?//')  # matches to foo:// and // (a protocol rela
 class Hyperlink(NamedTuple):
     uri: str
     docname: str
-    lineno: Optional[int]
+    lineno: int | None
 
 
 class CheckRequest(NamedTuple):
     next_check: float
-    hyperlink: Optional[Hyperlink]
+    hyperlink: Hyperlink | None
 
 
 class CheckResult(NamedTuple):
@@ -78,16 +69,6 @@ DEFAULT_REQUEST_HEADERS = {
 CHECK_IMMEDIATELY = 0
 QUEUE_POLL_SECS = 1
 DEFAULT_DELAY = 60.0
-
-
-def node_line_or_0(node: Element) -> int:
-    """
-    PriorityQueue items must be comparable. The line number is part of the
-    tuple used by the PriorityQueue, keep an homogeneous type for comparison.
-    """
-    warnings.warn('node_line_or_0() is deprecated.',
-                  RemovedInSphinx50Warning, stacklevel=2)
-    return get_node_line(node) or 0
 
 
 class AnchorCheckParser(HTMLParser):
@@ -133,120 +114,17 @@ class CheckExternalLinksBuilder(DummyBuilder):
                 '%(outdir)s/output.txt')
 
     def init(self) -> None:
-        self.hyperlinks: Dict[str, Hyperlink] = {}
-        self._good: Set[str] = set()
-        self._broken: Dict[str, str] = {}
-        self._redirected: Dict[str, Tuple[str, int]] = {}
+        self.broken_hyperlinks = 0
+        self.hyperlinks: dict[str, Hyperlink] = {}
         # set a timeout for non-responding servers
         socket.setdefaulttimeout(5.0)
 
-        # create queues and worker threads
-        self._wqueue: PriorityQueue[CheckRequestType] = PriorityQueue()
-        self._rqueue: Queue[CheckResult] = Queue()
-
-    @property
-    def anchors_ignore(self) -> List[Pattern]:
-        warnings.warn(
-            "%s.%s is deprecated." % (self.__class__.__name__, "anchors_ignore"),
-            RemovedInSphinx50Warning,
-            stacklevel=2,
-        )
-        return [re.compile(x) for x in self.config.linkcheck_anchors_ignore]
-
-    @property
-    def auth(self) -> List[Tuple[Pattern, Any]]:
-        warnings.warn(
-            "%s.%s is deprecated." % (self.__class__.__name__, "auth"),
-            RemovedInSphinx50Warning,
-            stacklevel=2,
-        )
-        return [(re.compile(pattern), auth_info) for pattern, auth_info
-                in self.config.linkcheck_auth]
-
-    @property
-    def to_ignore(self) -> List[Pattern]:
-        warnings.warn(
-            "%s.%s is deprecated." % (self.__class__.__name__, "to_ignore"),
-            RemovedInSphinx50Warning,
-            stacklevel=2,
-        )
-        return [re.compile(x) for x in self.config.linkcheck_ignore]
-
-    @property
-    def good(self) -> Set[str]:
-        warnings.warn(
-            "%s.%s is deprecated." % (self.__class__.__name__, "good"),
-            RemovedInSphinx50Warning,
-            stacklevel=2,
-        )
-        return self._good
-
-    @property
-    def broken(self) -> Dict[str, str]:
-        warnings.warn(
-            "%s.%s is deprecated." % (self.__class__.__name__, "broken"),
-            RemovedInSphinx50Warning,
-            stacklevel=2,
-        )
-        return self._broken
-
-    @property
-    def redirected(self) -> Dict[str, Tuple[str, int]]:
-        warnings.warn(
-            "%s.%s is deprecated." % (self.__class__.__name__, "redirected"),
-            RemovedInSphinx50Warning,
-            stacklevel=2,
-        )
-        return self._redirected
-
-    def check_thread(self) -> None:
-        warnings.warn(
-            "%s.%s is deprecated." % (self.__class__.__name__, "check_thread"),
-            RemovedInSphinx50Warning,
-            stacklevel=2,
-        )
-        # do nothing.
-
-    def limit_rate(self, response: Response) -> Optional[float]:
-        warnings.warn(
-            "%s.%s is deprecated." % (self.__class__.__name__, "limit_rate"),
-            RemovedInSphinx50Warning,
-            stacklevel=2,
-        )
-        worker = HyperlinkAvailabilityCheckWorker(self.env, self.config,
-                                                  None, None, {})
-        return worker.limit_rate(response)
-
-    def rqueue(self, response: Response) -> Queue:
-        warnings.warn(
-            "%s.%s is deprecated." % (self.__class__.__name__, "rqueue"),
-            RemovedInSphinx50Warning,
-            stacklevel=2,
-        )
-        return self._rqueue
-
-    def workers(self, response: Response) -> List[Thread]:
-        warnings.warn(
-            "%s.%s is deprecated." % (self.__class__.__name__, "workers"),
-            RemovedInSphinx50Warning,
-            stacklevel=2,
-        )
-        return []
-
-    def wqueue(self, response: Response) -> Queue:
-        warnings.warn(
-            "%s.%s is deprecated." % (self.__class__.__name__, "wqueue"),
-            RemovedInSphinx50Warning,
-            stacklevel=2,
-        )
-        return self._wqueue
-
     def process_result(self, result: CheckResult) -> None:
-        filename = self.env.doc2path(result.docname, None)
+        filename = self.env.doc2path(result.docname, False)
 
-        linkstat = dict(filename=filename, lineno=result.lineno,
-                        status=result.status, code=result.code, uri=result.uri,
-                        info=result.message)
+        linkstat = {"filename": filename, "lineno": result.lineno,
+                    "status": result.status, "code": result.code, "uri": result.uri,
+                    "info": result.message}
         self.write_linkstat(linkstat)
 
         if result.status == 'unchecked':
@@ -273,6 +151,7 @@ class CheckExternalLinksBuilder(DummyBuilder):
                 logger.info(red('broken    ') + result.uri + red(' - ' + result.message))
             self.write_entry('broken', result.docname, filename, result.lineno,
                              result.uri + ': ' + result.message)
+            self.broken_hyperlinks += 1
         elif result.status == 'redirected':
             try:
                 text, color = {
@@ -298,51 +177,43 @@ class CheckExternalLinksBuilder(DummyBuilder):
 
     def write_entry(self, what: str, docname: str, filename: str, line: int,
                     uri: str) -> None:
-        self.txt_outfile.write("%s:%s: [%s] %s\n" % (filename, line, what, uri))
+        self.txt_outfile.write(f"{filename}:{line}: [{what}] {uri}\n")
 
     def write_linkstat(self, data: dict) -> None:
         self.json_outfile.write(json.dumps(data))
         self.json_outfile.write('\n')
 
     def finish(self) -> None:
-        checker = HyperlinkAvailabilityChecker(self.env, self.config, self)
+        checker = HyperlinkAvailabilityChecker(self.env, self.config)
         logger.info('')
 
-        with open(path.join(self.outdir, 'output.txt'), 'w') as self.txt_outfile,\
-             open(path.join(self.outdir, 'output.json'), 'w') as self.json_outfile:
+        output_text = path.join(self.outdir, 'output.txt')
+        output_json = path.join(self.outdir, 'output.json')
+        with open(output_text, 'w', encoding="utf-8") as self.txt_outfile,\
+             open(output_json, 'w', encoding="utf-8") as self.json_outfile:
             for result in checker.check(self.hyperlinks):
                 self.process_result(result)
 
-        if self._broken:
+        if self.broken_hyperlinks:
             self.app.statuscode = 1
 
 
 class HyperlinkAvailabilityChecker:
-    def __init__(self, env: BuildEnvironment, config: Config,
-                 builder: CheckExternalLinksBuilder = None) -> None:
-        # Warning: builder argument will be removed in the sphinx-5.0.
-        # Don't use it from extensions.
-        # tag: RemovedInSphinx50Warning
-        self.builder = builder
+    def __init__(self, env: BuildEnvironment, config: Config) -> None:
         self.config = config
         self.env = env
-        self.rate_limits: Dict[str, RateLimit] = {}
-        self.workers: List[Thread] = []
+        self.rate_limits: dict[str, RateLimit] = {}
+        self.rqueue: Queue[CheckResult] = Queue()
+        self.workers: list[Thread] = []
+        self.wqueue: PriorityQueue[CheckRequest] = PriorityQueue()
 
         self.to_ignore = [re.compile(x) for x in self.config.linkcheck_ignore]
-
-        if builder:
-            self.rqueue = builder._rqueue
-            self.wqueue = builder._wqueue
-        else:
-            self.rqueue = Queue()
-            self.wqueue = PriorityQueue()
 
     def invoke_threads(self) -> None:
         for _i in range(self.config.linkcheck_workers):
             thread = HyperlinkAvailabilityCheckWorker(self.env, self.config,
                                                       self.rqueue, self.wqueue,
-                                                      self.rate_limits, self.builder)
+                                                      self.rate_limits)
             thread.start()
             self.workers.append(thread)
 
@@ -351,7 +222,7 @@ class HyperlinkAvailabilityChecker:
         for _worker in self.workers:
             self.wqueue.put(CheckRequest(CHECK_IMMEDIATELY, None), False)
 
-    def check(self, hyperlinks: Dict[str, Hyperlink]) -> Generator[CheckResult, None, None]:
+    def check(self, hyperlinks: dict[str, Hyperlink]) -> Generator[CheckResult, None, None]:
         self.invoke_threads()
 
         total_links = 0
@@ -377,12 +248,8 @@ class HyperlinkAvailabilityChecker:
 class HyperlinkAvailabilityCheckWorker(Thread):
     """A worker class for checking the availability of hyperlinks."""
 
-    def __init__(self, env: BuildEnvironment, config: Config, rqueue: Queue,
-                 wqueue: Queue, rate_limits: Dict[str, RateLimit],
-                 builder: CheckExternalLinksBuilder = None) -> None:
-        # Warning: builder argument will be removed in the sphinx-5.0.
-        # Don't use it from extensions.
-        # tag: RemovedInSphinx50Warning
+    def __init__(self, env: BuildEnvironment, config: Config, rqueue: Queue[CheckResult],
+                 wqueue: Queue[CheckRequest], rate_limits: dict[str, RateLimit]) -> None:
         self.config = config
         self.env = env
         self.rate_limits = rate_limits
@@ -396,17 +263,6 @@ class HyperlinkAvailabilityCheckWorker(Thread):
         self.auth = [(re.compile(pattern), auth_info) for pattern, auth_info
                      in self.config.linkcheck_auth]
 
-        if builder:
-            # if given, fill the result of checks as cache
-            self._good = builder._good
-            self._broken = builder._broken
-            self._redirected = builder._redirected
-        else:
-            # only for compatibility. Will be removed in Sphinx-5.0
-            self._good = set()
-            self._broken = {}
-            self._redirected = {}
-
         super().__init__(daemon=True)
 
     def run(self) -> None:
@@ -414,22 +270,22 @@ class HyperlinkAvailabilityCheckWorker(Thread):
         if self.config.linkcheck_timeout:
             kwargs['timeout'] = self.config.linkcheck_timeout
 
-        def get_request_headers() -> Dict:
+        def get_request_headers() -> dict[str, str]:
             url = urlparse(uri)
-            candidates = ["%s://%s" % (url.scheme, url.netloc),
-                          "%s://%s/" % (url.scheme, url.netloc),
+            candidates = [f"{url.scheme}://{url.netloc}",
+                          f"{url.scheme}://{url.netloc}/",
                           uri,
                           "*"]
 
             for u in candidates:
                 if u in self.config.linkcheck_request_headers:
-                    headers = dict(DEFAULT_REQUEST_HEADERS)
+                    headers = deepcopy(DEFAULT_REQUEST_HEADERS)
                     headers.update(self.config.linkcheck_request_headers[u])
                     return headers
 
             return {}
 
-        def check_uri() -> Tuple[str, str, int]:
+        def check_uri() -> tuple[str, str, int]:
             # split off anchor
             if '#' in uri:
                 req_url, anchor = uri.split('#', 1)
@@ -448,7 +304,7 @@ class HyperlinkAvailabilityCheckWorker(Thread):
                 req_url = encode_uri(req_url)
 
             # Get auth info, if any
-            for pattern, auth_info in self.auth:
+            for pattern, auth_info in self.auth:  # noqa: B007 (false positive)
                 if pattern.match(uri):
                     break
             else:
@@ -460,10 +316,10 @@ class HyperlinkAvailabilityCheckWorker(Thread):
             try:
                 if anchor and self.config.linkcheck_anchors:
                     # Read the whole document and see if #anchor exists
-                    response = requests.get(req_url, stream=True, config=self.config,
-                                            auth=auth_info, **kwargs)
-                    response.raise_for_status()
-                    found = check_anchor(response, unquote(anchor))
+                    with requests.get(req_url, stream=True, config=self.config, auth=auth_info,
+                                      **kwargs) as response:
+                        response.raise_for_status()
+                        found = check_anchor(response, unquote(anchor))
 
                     if not found:
                         raise Exception(__("Anchor '%s' not found") % anchor)
@@ -471,10 +327,9 @@ class HyperlinkAvailabilityCheckWorker(Thread):
                     try:
                         # try a HEAD request first, which should be easier on
                         # the server and the network
-                        response = requests.head(req_url, allow_redirects=True,
-                                                 config=self.config, auth=auth_info,
-                                                 **kwargs)
-                        response.raise_for_status()
+                        with requests.head(req_url, allow_redirects=True, config=self.config,
+                                           auth=auth_info, **kwargs) as response:
+                            response.raise_for_status()
                     # Servers drop the connection on HEAD requests, causing
                     # ConnectionError.
                     except (ConnectionError, HTTPError, TooManyRedirects) as err:
@@ -482,10 +337,9 @@ class HyperlinkAvailabilityCheckWorker(Thread):
                             raise
                         # retry with GET request if that fails, some servers
                         # don't like HEAD requests.
-                        response = requests.get(req_url, stream=True,
-                                                config=self.config,
-                                                auth=auth_info, **kwargs)
-                        response.raise_for_status()
+                        with requests.get(req_url, stream=True, config=self.config,
+                                          auth=auth_info, **kwargs) as response:
+                            response.raise_for_status()
             except HTTPError as err:
                 if err.response.status_code == 401:
                     # We'll take "Unauthorized" as working.
@@ -526,13 +380,13 @@ class HyperlinkAvailabilityCheckWorker(Thread):
                     return 'redirected', new_url, 0
 
         def allowed_redirect(url: str, new_url: str) -> bool:
-            for from_url, to_url in self.config.linkcheck_allowed_redirects.items():
-                if from_url.match(url) and to_url.match(new_url):
-                    return True
+            return any(
+                from_url.match(url) and to_url.match(new_url)
+                for from_url, to_url
+                in self.config.linkcheck_allowed_redirects.items()
+            )
 
-            return False
-
-        def check(docname: str) -> Tuple[str, str, int]:
+        def check(docname: str) -> tuple[str, str, int]:
             # check for various conditions without bothering the network
 
             for doc_matcher in self.documents_exclude:
@@ -554,14 +408,7 @@ class HyperlinkAvailabilityCheckWorker(Thread):
                     if path.exists(path.join(srcdir, uri)):
                         return 'working', '', 0
                     else:
-                        self._broken[uri] = ''
                         return 'broken', '', 0
-            elif uri in self._good:
-                return 'working', 'old', 0
-            elif uri in self._broken:
-                return 'broken', self._broken[uri], 0
-            elif uri in self._redirected:
-                return 'redirected', self._redirected[uri][0], self._redirected[uri][1]
 
             # need to actually check the URI
             for _ in range(self.config.linkcheck_retries):
@@ -569,26 +416,15 @@ class HyperlinkAvailabilityCheckWorker(Thread):
                 if status != "broken":
                     break
 
-            if status == "working":
-                self._good.add(uri)
-            elif status == "broken":
-                self._broken[uri] = info
-            elif status == "redirected":
-                self._redirected[uri] = (info, code)
-
             return (status, info, code)
 
         while True:
             check_request = self.wqueue.get()
-            try:
-                next_check, hyperlink = check_request
-                if hyperlink is None:
-                    break
+            next_check, hyperlink = check_request
+            if hyperlink is None:
+                break
 
-                uri, docname, lineno = hyperlink
-            except ValueError:
-                # old styled check_request (will be deprecated in Sphinx-5.0)
-                next_check, uri, docname, lineno = check_request
+            uri, docname, lineno = hyperlink
 
             if uri is None:
                 break
@@ -615,7 +451,7 @@ class HyperlinkAvailabilityCheckWorker(Thread):
                 self.rqueue.put(CheckResult(uri, docname, lineno, status, info, code))
             self.wqueue.task_done()
 
-    def limit_rate(self, response: Response) -> Optional[float]:
+    def limit_rate(self, response: Response) -> float | None:
         next_check = None
         retry_after = response.headers.get("Retry-After")
         if retry_after:
@@ -662,35 +498,40 @@ class HyperlinkCollector(SphinxPostTransform):
         builder = cast(CheckExternalLinksBuilder, self.app.builder)
         hyperlinks = builder.hyperlinks
 
+        def add_uri(uri: str, node: nodes.Element) -> None:
+            newuri = self.app.emit_firstresult('linkcheck-process-uri', uri)
+            if newuri:
+                uri = newuri
+
+            try:
+                lineno = get_node_line(node)
+            except ValueError:
+                lineno = None
+            uri_info = Hyperlink(uri, self.env.docname, lineno)
+            if uri not in hyperlinks:
+                hyperlinks[uri] = uri_info
+
         # reference nodes
         for refnode in self.document.findall(nodes.reference):
             if 'refuri' not in refnode:
                 continue
             uri = refnode['refuri']
-            newuri = self.app.emit_firstresult('linkcheck-process-uri', uri)
-            if newuri:
-                uri = newuri
-
-            lineno = get_node_line(refnode)
-            uri_info = Hyperlink(uri, self.env.docname, lineno)
-            if uri not in hyperlinks:
-                hyperlinks[uri] = uri_info
+            add_uri(uri, refnode)
 
         # image nodes
         for imgnode in self.document.findall(nodes.image):
             uri = imgnode['candidates'].get('?')
             if uri and '://' in uri:
-                newuri = self.app.emit_firstresult('linkcheck-process-uri', uri)
-                if newuri:
-                    uri = newuri
+                add_uri(uri, imgnode)
 
-                lineno = get_node_line(imgnode)
-                uri_info = Hyperlink(uri, self.env.docname, lineno)
-                if uri not in hyperlinks:
-                    hyperlinks[uri] = uri_info
+        # raw nodes
+        for rawnode in self.document.findall(nodes.raw):
+            uri = rawnode.get('source')
+            if uri and '://' in uri:
+                add_uri(uri, rawnode)
 
 
-def rewrite_github_anchor(app: Sphinx, uri: str) -> Optional[str]:
+def rewrite_github_anchor(app: Sphinx, uri: str) -> str | None:
     """Rewrite anchor name of the hyperlink to github.com
 
     The hyperlink anchors in github.com are dynamically generated.  This rewrites
@@ -718,23 +559,23 @@ def compile_linkcheck_allowed_redirects(app: Sphinx, config: Config) -> None:
             app.config.linkcheck_allowed_redirects.pop(url)
 
 
-def setup(app: Sphinx) -> Dict[str, Any]:
+def setup(app: Sphinx) -> dict[str, Any]:
     app.add_builder(CheckExternalLinksBuilder)
     app.add_post_transform(HyperlinkCollector)
 
-    app.add_config_value('linkcheck_ignore', [], None)
-    app.add_config_value('linkcheck_exclude_documents', [], None)
-    app.add_config_value('linkcheck_allowed_redirects', {}, None)
-    app.add_config_value('linkcheck_auth', [], None)
-    app.add_config_value('linkcheck_request_headers', {}, None)
-    app.add_config_value('linkcheck_retries', 1, None)
-    app.add_config_value('linkcheck_timeout', None, None, [int])
-    app.add_config_value('linkcheck_workers', 5, None)
-    app.add_config_value('linkcheck_anchors', True, None)
+    app.add_config_value('linkcheck_ignore', [], False)
+    app.add_config_value('linkcheck_exclude_documents', [], False)
+    app.add_config_value('linkcheck_allowed_redirects', {}, False)
+    app.add_config_value('linkcheck_auth', [], False)
+    app.add_config_value('linkcheck_request_headers', {}, False)
+    app.add_config_value('linkcheck_retries', 1, False)
+    app.add_config_value('linkcheck_timeout', None, False, [int, float])
+    app.add_config_value('linkcheck_workers', 5, False)
+    app.add_config_value('linkcheck_anchors', True, False)
     # Anchors starting with ! are ignored since they are
     # commonly used for dynamic pages
-    app.add_config_value('linkcheck_anchors_ignore', ["^!"], None)
-    app.add_config_value('linkcheck_rate_limit_timeout', 300.0, None)
+    app.add_config_value('linkcheck_anchors_ignore', ["^!"], False)
+    app.add_config_value('linkcheck_rate_limit_timeout', 300.0, False)
 
     app.add_event('linkcheck-process-uri')
 

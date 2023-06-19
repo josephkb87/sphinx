@@ -1,17 +1,11 @@
-"""
-    sphinx.environment.adapters.indexentries
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+"""Index entries adapters for sphinx.environment."""
 
-    Index entries adapters for sphinx.environment.
-
-    :copyright: Copyright 2007-2022 by the Sphinx team, see AUTHORS.
-    :license: BSD, see LICENSE for details.
-"""
+from __future__ import annotations
 
 import re
 import unicodedata
 from itertools import groupby
-from typing import Any, Dict, List, Pattern, Tuple, cast
+from typing import Any, cast
 
 from sphinx.builders import Builder
 from sphinx.domains.index import IndexDomain
@@ -28,13 +22,13 @@ class IndexEntries:
         self.env = env
 
     def create_index(self, builder: Builder, group_entries: bool = True,
-                     _fixre: Pattern = re.compile(r'(.*) ([(][^()]*[)])')
-                     ) -> List[Tuple[str, List[Tuple[str, Any]]]]:
+                     _fixre: re.Pattern = re.compile(r'(.*) ([(][^()]*[)])'),
+                     ) -> list[tuple[str, list[tuple[str, Any]]]]:
         """Create the real index from the collected index entries."""
-        new: Dict[str, List] = {}
+        new: dict[str, list] = {}
 
-        def add_entry(word: str, subword: str, main: str, link: bool = True,
-                      dic: Dict = new, key: str = None) -> None:
+        def add_entry(word: str, subword: str, main: str | None, link: bool = True,
+                      dic: dict[str, list] = new, key: str | None = None) -> None:
             # Force the word to be unicode if it's a ASCII bytestring.
             # This will solve problems with unicode normalization later.
             # For instance the RFC role will add bytestrings at the moment
@@ -87,7 +81,7 @@ class IndexEntries:
                     logger.warning(str(err), location=fn)
 
         # sort the index entries for same keyword.
-        def keyfunc0(entry: Tuple[str, str]) -> Tuple[bool, str]:
+        def keyfunc0(entry: tuple[str, str]) -> tuple[bool, str]:
             main, uri = entry
             return (not main, uri)  # show main entries at first
 
@@ -97,7 +91,7 @@ class IndexEntries:
                 subentry[0].sort(key=keyfunc0)  # type: ignore
 
         # sort the index entries
-        def keyfunc(entry: Tuple[str, List]) -> Tuple[Tuple[int, str], str]:
+        def keyfunc(entry: tuple[str, list]) -> tuple[tuple[int, str], str]:
             key, (void, void, category_key) = entry
             if category_key:
                 # using specified category key to sort
@@ -126,7 +120,7 @@ class IndexEntries:
             #     (in module foo)
             #     (in module bar)
             oldkey = ''
-            oldsubitems: Dict[str, List] = None
+            oldsubitems: dict[str, list] | None = None
             i = 0
             while i < len(newlist):
                 key, (targets, subitems, _key) = newlist[i]
@@ -148,7 +142,7 @@ class IndexEntries:
                 i += 1
 
         # sort the sub-index entries
-        def keyfunc2(entry: Tuple[str, List]) -> str:
+        def keyfunc2(entry: tuple[str, list]) -> str:
             key = unicodedata.normalize('NFD', entry[0].lower())
             if key.startswith('\N{RIGHT-TO-LEFT MARK}'):
                 key = key[1:]
@@ -157,7 +151,7 @@ class IndexEntries:
             return key
 
         # group the entries by letter
-        def keyfunc3(item: Tuple[str, List]) -> str:
+        def keyfunc3(item: tuple[str, list]) -> str:
             # hack: mutating the subitems dicts to a list in the keyfunc
             k, v = item
             v[1] = sorted(((si, se) for (si, (se, void, void)) in v[1].items()),

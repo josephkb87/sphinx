@@ -1,25 +1,23 @@
-"""
-    test_intersphinx
-    ~~~~~~~~~~~~~~~~
-
-    Test the intersphinx extension.
-
-    :copyright: Copyright 2007-2022 by the Sphinx team, see AUTHORS.
-    :license: BSD, see LICENSE for details.
-"""
+"""Test the intersphinx extension."""
 
 import http.server
 import os
-import unittest
 from unittest import mock
 
 import pytest
 from docutils import nodes
 
 from sphinx import addnodes
-from sphinx.ext.intersphinx import (INVENTORY_FILENAME, _get_safe_url, _strip_basic_auth,
-                                    fetch_inventory, inspect_main, load_mappings,
-                                    missing_reference, normalize_intersphinx_mapping)
+from sphinx.ext.intersphinx import (
+    INVENTORY_FILENAME,
+    _get_safe_url,
+    _strip_basic_auth,
+    fetch_inventory,
+    inspect_main,
+    load_mappings,
+    missing_reference,
+    normalize_intersphinx_mapping,
+)
 from sphinx.ext.intersphinx import setup as intersphinx_setup
 
 from .test_util_inventory import inventory_v2, inventory_v2_not_having_version
@@ -50,7 +48,7 @@ def set_config(app, mapping):
 
 @mock.patch('sphinx.ext.intersphinx.InventoryFile')
 @mock.patch('sphinx.ext.intersphinx._read_from_url')
-def test_fetch_inventory_redirection(_read_from_url, InventoryFile, app, status, warning):
+def test_fetch_inventory_redirection(_read_from_url, InventoryFile, app, status, warning):  # NoQA: PT019
     intersphinx_setup(app)
     _read_from_url().readline.return_value = b'# Sphinx inventory version 2'
 
@@ -254,7 +252,7 @@ def test_missing_reference_cppdomain(tempdir, app, status, warning):
     load_mappings(app)
 
     app.build()
-    html = (app.outdir / 'index.html').read_text()
+    html = (app.outdir / 'index.html').read_text(encoding='utf8')
     assert ('<a class="reference external"'
             ' href="https://docs.python.org/index.html#cpp_foo_bar"'
             ' title="(in foo v2.0)">'
@@ -392,7 +390,10 @@ def test_load_mappings_warnings(tempdir, app, status, warning):
     # load the inventory and check if it's done correctly
     normalize_intersphinx_mapping(app, app.config)
     load_mappings(app)
-    assert warning.getvalue().count('\n') == 1
+    warnings = warning.getvalue().splitlines()
+    assert len(warnings) == 2
+    assert "The pre-Sphinx 1.0 'intersphinx_mapping' format is " in warnings[0]
+    assert 'intersphinx identifier 12345 is not string. Ignored' in warnings[1]
 
 
 def test_load_mappings_fallback(tempdir, app, status, warning):
@@ -423,27 +424,27 @@ def test_load_mappings_fallback(tempdir, app, status, warning):
     normalize_intersphinx_mapping(app, app.config)
     load_mappings(app)
     assert "encountered some issues with some of the inventories" in status.getvalue()
-    assert "" == warning.getvalue()
+    assert warning.getvalue() == ""
 
     rn = reference_check(app, 'py', 'func', 'module1.func', 'foo')
     assert isinstance(rn, nodes.reference)
 
 
-class TestStripBasicAuth(unittest.TestCase):
+class TestStripBasicAuth:
     """Tests for sphinx.ext.intersphinx._strip_basic_auth()"""
     def test_auth_stripped(self):
         """basic auth creds stripped from URL containing creds"""
         url = 'https://user:12345@domain.com/project/objects.inv'
         expected = 'https://domain.com/project/objects.inv'
         actual = _strip_basic_auth(url)
-        self.assertEqual(expected, actual)
+        assert expected == actual
 
     def test_no_auth(self):
         """url unchanged if param doesn't contain basic auth creds"""
         url = 'https://domain.com/project/objects.inv'
         expected = 'https://domain.com/project/objects.inv'
         actual = _strip_basic_auth(url)
-        self.assertEqual(expected, actual)
+        assert expected == actual
 
     def test_having_port(self):
         """basic auth creds correctly stripped from URL containing creds even if URL
@@ -451,7 +452,7 @@ class TestStripBasicAuth(unittest.TestCase):
         url = 'https://user:12345@domain.com:8080/project/objects.inv'
         expected = 'https://domain.com:8080/project/objects.inv'
         actual = _strip_basic_auth(url)
-        self.assertEqual(expected, actual)
+        assert expected == actual
 
 
 def test_getsafeurl_authed():
@@ -541,7 +542,7 @@ def test_intersphinx_role(app, warning):
     load_mappings(app)
 
     app.build()
-    content = (app.outdir / 'index.html').read_text()
+    content = (app.outdir / 'index.html').read_text(encoding='utf8')
     wStr = warning.getvalue()
 
     html = '<a class="reference external" href="http://example.org/{}" title="(in foo v2.0)">'
