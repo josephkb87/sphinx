@@ -18,6 +18,10 @@
    :target: https://opensource.org/licenses/BSD-2-Clause
    :alt: BSD 2 Clause
 
+.. image:: https://img.shields.io/librariesio/github/:josephkb87/:sphinx
+:   alt: Libraries.io dependency status for GitHub repo
+
+
 **Sphinx makes it easy to create intelligent and beautiful documentation.**
 
 Sphinx uses reStructuredText as its markup language, and many of its strengths
